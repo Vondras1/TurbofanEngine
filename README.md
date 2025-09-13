@@ -26,7 +26,7 @@ The PDF you will return will have **max. 2 pages**.
 ## Breakdown of the points
 
 - [Yes] **0.25p** – an established communication channel and appropriate strategy for code sharing.  
-- [Asi?] **0.25p** – data correctly imported into appropriate matrices completely: observations as rows, variables (predictors) as columns.  
+- [Yes] **0.25p** – data correctly imported into appropriate matrices completely: observations as rows, variables (predictors) as columns.  
 - [ ] **0.5p** – identification of challenges of the data (e.g. time series not synchronized, missing values, extra variables, unknown physical meanings, etc.).  
 - [ ] **0.5p** – a visualization and comment on the dataset (variable distribution, number of observations, type of measurements – time series or not).  
 - [ ] **3p** – exploratory data analysis with PCA: explain variable correlations and visualize the PCs using biplots, loading plots.(*only on the X matrix – we are not looking at the response variable now*)  
