@@ -4,6 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import math
 from IPython.display import display
+import os
 
 # %% Data loading -----------------------------------------------------------------------------------------------
 def filter_no_variance(data):
@@ -119,18 +120,6 @@ def test_from_file(file_name, gt_file_name, dropped_cols):
     return test_data
 
 
-train_data1, validation_data1, dropped_cols1 = train_from_file("./NASA-Turbofan-data/data/train_FD001.txt")
-test_data1 = test_from_file("./NASA-Turbofan-data/data/test_FD001.txt", "./NASA-Turbofan-data/data/RUL_FD001.txt", dropped_cols=dropped_cols1)
-
-train_data2, validation_data2, dropped_cols2 = train_from_file("./NASA-Turbofan-data/data/train_FD002.txt")
-test_data2 = test_from_file("./NASA-Turbofan-data/data/test_FD002.txt", "./NASA-Turbofan-data/data/RUL_FD002.txt", dropped_cols=dropped_cols2)
-
-train_data3, validation_data3, dropped_cols3 = train_from_file("./NASA-Turbofan-data/data/train_FD003.txt")
-test_data3 = test_from_file("./NASA-Turbofan-data/data/test_FD003.txt", "./NASA-Turbofan-data/data/RUL_FD003.txt", dropped_cols=dropped_cols3)
-
-train_data4, validation_data4, dropped_cols4 = train_from_file("./NASA-Turbofan-data/data/train_FD004.txt")
-test_data4 = test_from_file("./NASA-Turbofan-data/data/test_FD004.txt", "./NASA-Turbofan-data/data/RUL_FD004.txt", dropped_cols=dropped_cols4)
-
 # %% Data normalization -------------------------------------------------------------------------------------------
 def normalizeRUL(Y, y_min, y_max):
     Y_scaled = (Y - y_min) / (y_max - y_min)
@@ -161,11 +150,6 @@ def normalize_data(train_data, validation_data, test_data, normRUL=False):
         test_data["RUL"] = normalizeRUL(test_data["RUL"], y_min, y_max)
 
     return train_data, validation_data, test_data, mu_train, sd_train
-
-# normalize
-train_data1, validation_data1, test_data1, mu_train, sd_train = normalize_data(train_data1, validation_data1, test_data1)
-display(test_data1)
-
 
 
 # %% PLS starts here -----------------------------------------------------------------------------------------------
@@ -251,13 +235,13 @@ def plot_lv_curves(res):
     plt.ylim([ymin, 1.0]); plt.axvline(res["q2_best"], linestyle="--"); plt.show()
 
 
-X1 = train_data1.iloc[:, 2:-1]
-Y1 = train_data1.iloc[:, -1]
-g_train = train_data1.iloc[:, 0]
+# X1 = train_data1.iloc[:, 2:-1]
+# Y1 = train_data1.iloc[:, -1]
+# g_train = train_data1.iloc[:, 0]
 
-res = pls_groupcv_press_q2(X1.to_numpy(), Y1.to_numpy(), g_train.to_numpy(), maxLV=10, n_splits=5)
-plot_lv_curves(res)
-print("Best by PRESS:", res["press_best"], "   Best by Q²:", res["q2_best"])
+# res = pls_groupcv_press_q2(X1.to_numpy(), Y1.to_numpy(), g_train.to_numpy(), maxLV=10, n_splits=5)
+# plot_lv_curves(res)
+# print("Best by PRESS:", res["press_best"], "   Best by Q²:", res["q2_best"])
 
 
 # %% Final training ---------------------------------------------------------------------------------
@@ -267,146 +251,205 @@ def predict_on_df(model, df, test=False):
     Ypred = model.predict(Xv).ravel()
     return Yv, Ypred
 
-n_components = 4 # Based on cross-validation section
-pls2 = PLSRegression(n_components=n_components, scale=False)
-pls2.fit(X1, Y1)
 
-Yv, Ypred = predict_on_df(model=pls2, df=validation_data1)
-Ypred = np.clip(Ypred, 0, None)
+def final_training(train_data, validation_data, test_data, prefix="", n_components=4, test_unit_id=20):
+    """Train final PLS model, evaluate on validation and test sets and produce plots/files.
 
-# Yv and Ypred side by side
-comparison = pd.DataFrame({
-    "Y_true": Yv.values,
-    "Y_pred": Ypred
-})
-display(comparison)
-comparison.to_csv("comparison_results.csv", index=False)
+    Kept as close as possible to the original script but wrapped into a function.
+    """
+    # Normalize this dataset using training stats
+    train_data, validation_data, test_data, mu_train, sd_train = normalize_data(train_data, validation_data, test_data)
 
-# Metrics
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-rmse = np.sqrt(mean_squared_error(Yv, Ypred))
-mae  = mean_absolute_error(Yv, Ypred)
-r2   = r2_score(Yv, Ypred)
+    # train final model
+    X1 = train_data.iloc[:, 2:-1]
+    Y1 = train_data.iloc[:, -1]
 
-print(f"Validation dataset metrics: RMSE={rmse:.3f}, MAE={mae:.3f}, R²={r2:.3f}")
+    pls2 = PLSRegression(n_components=n_components, scale=False)
+    pls2.fit(X1, Y1)
 
-# window = 25: RMSE=33.651, MAE=26.502, R²=0.737
-# window = 20: RMSE=34.457, MAE=27.083, R²=0.725
-# window = 15: RMSE=35.282, MAE=27.628, R²=0.711
-# window = 10: RMSE=35.997, MAE=28.062, R²=0.699
+    # Validation predictions
+    Yv, Ypred = predict_on_df(model=pls2, df=validation_data)
+    Ypred = np.clip(Ypred, 0, None)
+
+    # Yv and Ypred side by side
+    comparison = pd.DataFrame({
+        "Y_true": Yv.values,
+        "Y_pred": Ypred
+    })
+    display(comparison)
+    results_dir = "Results"
+    comp_name = f"{prefix}_comparison_results.csv" if prefix else "comparison_results.csv"
+    comparison.to_csv(os.path.join(results_dir, comp_name), index=False)
+
+    # Metrics
+    from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+    rmse = np.sqrt(mean_squared_error(Yv, Ypred))
+    mae = mean_absolute_error(Yv, Ypred)
+    r2 = r2_score(Yv, Ypred)
+
+    print(f"Validation dataset metrics: RMSE={rmse:.3f}, MAE={mae:.3f}, R²={r2:.3f}")
+
+    # window = 25: RMSE=33.651, MAE=26.502, R²=0.737
+    # window = 20: RMSE=34.457, MAE=27.083, R²=0.725
+    # window = 15: RMSE=35.282, MAE=27.628, R²=0.711
+    # window = 10: RMSE=35.997, MAE=28.062, R²=0.699
+
+    # Validation unit plot
+    print(validation_data["unit number"].unique())
+    unit_id = validation_data["unit number"].unique()[0]
+    val_unit = validation_data[validation_data["unit number"] == unit_id]
+
+    # Prepare inputs
+    print(f"Val unit {unit_id} shape: {val_unit.shape}")
+    Xunit = val_unit.iloc[:, 2:-1].to_numpy()
+    Yunit = val_unit["RUL"].to_numpy()
+
+    # Predict
+    print(f"Xunit shape: {Xunit.shape}")
+    Ypred = pls2.predict(Xunit).ravel()
+    Ypred = np.clip(Ypred, 0, None)
+
+    # Compute residuals
+    residuals = Yunit - Ypred
+
+    # Metrics for unit
+    rmse = np.sqrt(mean_squared_error(Yunit, Ypred))
+    mae = mean_absolute_error(Yunit, Ypred)
+    r2 = r2_score(Yunit, Ypred)
+
+    print(f"Unit {unit_id} metrics: RMSE={rmse:.3f}, MAE={mae:.3f}, R²={r2:.3f}")
+
+    # Plot residuals for that unit
+    plt.figure(figsize=(14, 4))
+    plt.plot(residuals, '-', linewidth=1.2)
+    plt.xlabel("Cycle index (time)")
+    plt.ylabel("Residual")
+    plt.title(f"Validation - Residuals for Unit {unit_id}")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    # Observed vs Predicted (scatter)
+    plt.figure(figsize=(5, 5))
+    plt.scatter(Yunit, Ypred, s=15, c="tab:blue", alpha=0.7)
+    plt.plot([Yunit.min(), Yunit.max()], [Yunit.min(), Yunit.max()], "k--", lw=1.2)
+    plt.xlabel("Observed RUL")
+    plt.ylabel("Predicted RUL")
+    plt.title(f"Validation - Observed vs Predicted (Unit {unit_id})")
+    plt.grid(True)
+    plt.axis("equal")
+    plt.show()
+
+    # Predict on test
+    Yt, Ypred = predict_on_df(model=pls2, df=test_data)
+    Ypred = np.clip(Ypred, 0, None)
+
+    # Y and Ypred side by side for test
+    test_comparison = pd.DataFrame({
+        "Y_true": Yt.values,
+        "Y_pred": Ypred
+    })
+    display(test_comparison)
+    test_name = f"{prefix}_test_comparison_results.csv" if prefix else "test_comparison_results.csv"
+    test_comparison.to_csv(os.path.join(results_dir, test_name), index=False)
+
+    rmse = np.sqrt(mean_squared_error(Yt, Ypred))
+    mae = mean_absolute_error(Yt, Ypred)
+    r2 = r2_score(Yt, Ypred)
+
+    print(f"Test dataset metrics: RMSE={rmse:.3f}, MAE={mae:.3f}, R²={r2:.3f}")
+
+    # Test unit plot
+    unit_id = test_unit_id
+    test_unit = test_data[test_data["unit number"] == unit_id]
+
+    # Prepare inputs
+    Xunit = test_unit.iloc[:, 2:-1].to_numpy()
+    Yunit = test_unit["RUL"].to_numpy()
+
+    # Predict
+    Ypred = pls2.predict(Xunit).ravel()
+    Ypred = np.clip(Ypred, 0, None)
+
+    # Compute residuals
+    residuals = Yunit - Ypred
+
+    # Metrics for test unit
+    rmse = np.sqrt(mean_squared_error(Yunit, Ypred))
+    mae = mean_absolute_error(Yunit, Ypred)
+    r2 = r2_score(Yunit, Ypred)
+
+    print(f"Unit {unit_id} metrics: RMSE={rmse:.3f}, MAE={mae:.3f}, R²={r2:.3f}")
+
+    # Plot residuals for that unit and save
+    plt.figure(figsize=(14, 4))
+    plt.plot(residuals, '-', linewidth=1.2)
+    plt.xlabel("Cycle index (time)")
+    plt.ylabel("Residual")
+    plt.title(f"TEST - Residuals for Unit {unit_id}")
+    plt.grid(True)
+    plt.tight_layout()
+    res_fname = f"residuals_test_unit_{unit_id}_{prefix}.png" if prefix else f"residuals_test_unit_{unit_id}.png"
+    plt.savefig(os.path.join(results_dir, res_fname), dpi=150)
+
+    # Observed vs Predicted (scatter) and save
+    plt.figure(figsize=(5, 5))
+    plt.scatter(Yunit, Ypred, s=15, c="tab:blue", alpha=0.7)
+    plt.plot([Yunit.min(), Yunit.max()], [Yunit.min(), Yunit.max()], "k--", lw=1.2)
+    plt.xlabel("Observed RUL")
+    plt.ylabel("Predicted RUL")
+    plt.title(f"TEST - Observed vs Predicted (Unit {unit_id})")
+    plt.grid(True)
+    plt.axis("equal")
+    obs_fname = f"obs_vs_pred_test_unit_{unit_id}_{prefix}.png" if prefix else f"obs_vs_pred_test_unit_{unit_id}.png"
+    plt.savefig(os.path.join(results_dir, obs_fname), dpi=150)
 
 
-# %% Validation unit plot -----------------------------------------------------------------------------------------------
-unit_id = 32 # Select unit ID that you want to plot
-val_unit = validation_data1[validation_data1["unit number"] == unit_id]
+def main():
+    # Run final analysis for each dataset
 
-# Prepare inputs
-Xunit = val_unit.iloc[:, 2:-1].to_numpy()
-Yunit = val_unit["RUL"].to_numpy()
+    train_data1, validation_data1, dropped_cols1 = train_from_file("./NASA-Turbofan-data/data/train_FD001.txt")
+    test_data1 = test_from_file("./NASA-Turbofan-data/data/test_FD001.txt", "./NASA-Turbofan-data/data/RUL_FD001.txt", dropped_cols=dropped_cols1)
 
-# Predict
-Ypred = pls2.predict(Xunit).ravel()
-Ypred = np.clip(Ypred, 0, None)
+    train_data2, validation_data2, dropped_cols2 = train_from_file("./NASA-Turbofan-data/data/train_FD002.txt")
+    test_data2 = test_from_file("./NASA-Turbofan-data/data/test_FD002.txt", "./NASA-Turbofan-data/data/RUL_FD002.txt", dropped_cols=dropped_cols2)
 
-# Compute residuals
-residuals = Yunit - Ypred
+    train_data3, validation_data3, dropped_cols3 = train_from_file("./NASA-Turbofan-data/data/train_FD003.txt")
+    test_data3 = test_from_file("./NASA-Turbofan-data/data/test_FD003.txt", "./NASA-Turbofan-data/data/RUL_FD003.txt", dropped_cols=dropped_cols3)
 
-# Metrics
-rmse = np.sqrt(mean_squared_error(Yunit, Ypred))
-mae  = mean_absolute_error(Yunit, Ypred)
-r2   = r2_score(Yunit, Ypred)
+    train_data4, validation_data4, dropped_cols4 = train_from_file("./NASA-Turbofan-data/data/train_FD004.txt")
+    test_data4 = test_from_file("./NASA-Turbofan-data/data/test_FD004.txt", "./NASA-Turbofan-data/data/RUL_FD004.txt", dropped_cols=dropped_cols4)
+    
+    datasets = [
+        ("FD001", train_data1, validation_data1, test_data1),
+        ("FD002", train_data2, validation_data2, test_data2),
+        ("FD003", train_data3, validation_data3, test_data3),
+        ("FD004", train_data4, validation_data4, test_data4),
+    ]
 
-print(f"Unit {unit_id} metrics: RMSE={rmse:.3f}, MAE={mae:.3f}, R²={r2:.3f}")
+    for prefix, train_d, val_d, test_d in datasets:
+        print(f"\n--- Running cross-validation (pls_groupcv_press_q2) for {prefix} ---")
+        # normalize a copy for CV so we don't mutate the original datasets
+        t_copy = train_d.copy()
+        v_copy = val_d.copy()
+        te_copy = test_d.copy()
+        t_copy, v_copy, te_copy, mu_t, sd_t = normalize_data(t_copy, v_copy, te_copy)
 
-# Plot residuals for that unit
-plt.figure(figsize=(14, 4))
+        X_cv = t_copy.iloc[:, 2:-1]
+        Y_cv = t_copy.iloc[:, -1]
+        g_cv = t_copy.iloc[:, 0]
 
-# Residuals vs. time
-plt.plot(residuals, '-', linewidth=1.2)
-plt.xlabel("Cycle index (time)")
-plt.ylabel("Residual")
-plt.title(f"Validation - Residuals for Unit {unit_id}")
-plt.grid(True)
-plt.tight_layout()
-plt.show()
+        res = pls_groupcv_press_q2(X_cv.to_numpy(), Y_cv.to_numpy(), g_cv.to_numpy(), maxLV=10, n_splits=5)
+        plot_lv_curves(res)
+        print(f"Best by PRESS: {res['press_best']}   Best by Q²: {res['q2_best']}")
 
-# Observed vs Predicted (scatter)
-plt.figure(figsize=(5,5))
-plt.scatter(Yunit, Ypred, s=15, c="tab:blue", alpha=0.7)
-plt.plot([Yunit.min(), Yunit.max()], [Yunit.min(), Yunit.max()], "k--", lw=1.2)
-plt.xlabel("Observed RUL")
-plt.ylabel("Predicted RUL")
-plt.title(f"Validation - Observed vs Predicted (Unit {unit_id})")
-plt.grid(True)
-plt.axis("equal")
-plt.show()
+        print(f"\n--- Running final training for {prefix} ---")
+        final_training(train_d, val_d, test_d, prefix=prefix)
 
 
-# %% Predict on test ----------------------------------------------------------------------------------
-Yt, Ypred = predict_on_df(model=pls2, df=test_data1)
-Ypred = np.clip(Ypred, 0, None)
-
-# Yv and Ypred side by side
-test_comparison = pd.DataFrame({
-    "Y_true": Yt.values,
-    "Y_pred": Ypred
-})
-display(test_comparison)
-test_comparison.to_csv("test_comparison_results.csv", index=False)
-
-rmse = np.sqrt(mean_squared_error(Yt, Ypred))
-mae  = mean_absolute_error(Yt, Ypred)
-r2   = r2_score(Yt, Ypred)
-
-print(f"Test dataset metrics: RMSE={rmse:.3f}, MAE={mae:.3f}, R²={r2:.3f}")
-# Test dataset metrics: RMSE=47.586, MAE=36.351, R²=0.349
+if __name__ == "__main__":
+    main()
 
 
-# %% Test unit plot ----------------------------------------------------------------------------------
-unit_id = 20 # Select unit ID that you want to plot
-test_unit = test_data1[test_data1["unit number"] == unit_id]
-
-# Prepare inputs
-Xunit = test_unit.iloc[:, 2:-1].to_numpy()
-Yunit = test_unit["RUL"].to_numpy()
-
-# Predict
-Ypred = pls2.predict(Xunit).ravel()
-Ypred = np.clip(Ypred, 0, None)
-
-# Compute residuals
-residuals = Yunit - Ypred
-
-# Metrics
-rmse = np.sqrt(mean_squared_error(Yunit, Ypred))
-mae  = mean_absolute_error(Yunit, Ypred)
-r2   = r2_score(Yunit, Ypred)
-
-print(f"Unit {unit_id} metrics: RMSE={rmse:.3f}, MAE={mae:.3f}, R²={r2:.3f}")
-
-# Plot residuals for that unit
-plt.figure(figsize=(14, 4))
-
-# Residuals vs. time
-plt.plot(residuals, '-', linewidth=1.2)
-plt.xlabel("Cycle index (time)")
-plt.ylabel("Residual")
-plt.title(f"TEST - Residuals for Unit {unit_id}")
-plt.grid(True)
-plt.tight_layout()
-plt.show()
-
-# Observed vs Predicted (scatter)
-plt.figure(figsize=(5,5))
-plt.scatter(Yunit, Ypred, s=15, c="tab:blue", alpha=0.7)
-plt.plot([Yunit.min(), Yunit.max()], [Yunit.min(), Yunit.max()], "k--", lw=1.2)
-plt.xlabel("Observed RUL")
-plt.ylabel("Predicted RUL")
-plt.title(f"TEST - Observed vs Predicted (Unit {unit_id})")
-plt.grid(True)
-plt.axis("equal")
-plt.show()
-
-
-
+# %%
 # %%
