@@ -254,8 +254,7 @@ def predict_on_df(model, df, test=False):
 
 def final_training(train_data, validation_data, test_data, prefix="", n_components=4, test_unit_id=20):
     """Train final PLS model, evaluate on validation and test sets and produce plots/files.
-
-    Kept as close as possible to the original script but wrapped into a function.
+        prefix - string to prefix output files with (e.g. "FD001")
     """
     # Normalize this dataset using training stats
     train_data, validation_data, test_data, mu_train, sd_train = normalize_data(train_data, validation_data, test_data)
