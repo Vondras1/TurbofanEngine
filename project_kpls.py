@@ -4,6 +4,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import math
 from IPython.display import display
+import warnings
+
+warnings.filterwarnings("ignore", message="y residual is constant at iteration")
 
 # %% Data loading -----------------------------------------------------------------------------------------------
 def filter_no_variance(data):
@@ -122,14 +125,14 @@ def test_from_file(file_name, gt_file_name, dropped_cols):
 train_data1, validation_data1, dropped_cols1 = train_from_file("./NASA-Turbofan-data/data/train_FD001.txt")
 test_data1 = test_from_file("./NASA-Turbofan-data/data/test_FD001.txt", "./NASA-Turbofan-data/data/RUL_FD001.txt", dropped_cols=dropped_cols1)
 
-train_data2, validation_data2, dropped_cols2 = train_from_file("./NASA-Turbofan-data/data/train_FD002.txt")
-test_data2 = test_from_file("./NASA-Turbofan-data/data/test_FD002.txt", "./NASA-Turbofan-data/data/RUL_FD002.txt", dropped_cols=dropped_cols2)
+# train_data2, validation_data2, dropped_cols2 = train_from_file("./NASA-Turbofan-data/data/train_FD002.txt")
+# test_data2 = test_from_file("./NASA-Turbofan-data/data/test_FD002.txt", "./NASA-Turbofan-data/data/RUL_FD002.txt", dropped_cols=dropped_cols2)
 
-train_data3, validation_data3, dropped_cols3 = train_from_file("./NASA-Turbofan-data/data/train_FD003.txt")
-test_data3 = test_from_file("./NASA-Turbofan-data/data/test_FD003.txt", "./NASA-Turbofan-data/data/RUL_FD003.txt", dropped_cols=dropped_cols3)
+# train_data3, validation_data3, dropped_cols3 = train_from_file("./NASA-Turbofan-data/data/train_FD003.txt")
+# test_data3 = test_from_file("./NASA-Turbofan-data/data/test_FD003.txt", "./NASA-Turbofan-data/data/RUL_FD003.txt", dropped_cols=dropped_cols3)
 
-train_data4, validation_data4, dropped_cols4 = train_from_file("./NASA-Turbofan-data/data/train_FD004.txt")
-test_data4 = test_from_file("./NASA-Turbofan-data/data/test_FD004.txt", "./NASA-Turbofan-data/data/RUL_FD004.txt", dropped_cols=dropped_cols4)
+# train_data4, validation_data4, dropped_cols4 = train_from_file("./NASA-Turbofan-data/data/train_FD004.txt")
+# test_data4 = test_from_file("./NASA-Turbofan-data/data/test_FD004.txt", "./NASA-Turbofan-data/data/RUL_FD004.txt", dropped_cols=dropped_cols4)
 
 # %% Data normalization -------------------------------------------------------------------------------------------
 def normalizeRUL(Y, y_min, y_max):
@@ -164,109 +167,126 @@ def normalize_data(train_data, validation_data, test_data, normRUL=False):
 
 # normalize
 train_data1, validation_data1, test_data1, mu_train, sd_train = normalize_data(train_data1, validation_data1, test_data1)
-display(test_data1)
 
-
-
-# %% KLS starts here -----------------------------------------------------------------------------------------------
+# %% 
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import GroupKFold
 from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.preprocessing import KernelCenterer
 from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.model_selection import KFold
+from genetic import run_genetic
 
-# %% KPLS
+# %% KPLS starts here
 
-X_train = train_data1.iloc[:, 2:-1]
-Y_train = train_data1.iloc[:, -1]
+def fitness(gamma, n_lv, X, y):
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    q2_scores = []
+    for train_idx, test_idx in kf.split(X):
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+        
+        # Compute kernel matrices
+        K_train = rbf_kernel(X_train, X_train, gamma=gamma)
+        K_test = rbf_kernel(X_test, X_train, gamma=gamma)
 
-X_validation = validation_data1.iloc[:, 2:-1]
-Y_validation = validation_data1.iloc[:, -1]
+        centerer = KernelCenterer()
+        centerer.fit_transform(K_train)
+        K_train_c = centerer.fit_transform(K_train)
+        K_test_c = centerer.transform(K_test)
+        
+        # Fit PLS on kernel features
+        pls = PLSRegression(n_components=n_lv)
+        pls.fit(K_train_c, y_train)
+        
+        # Predict
+        y_pred = pls.predict(K_test_c)
+        ss_res = np.sum((y_test - y_pred) ** 2)
+        ss_tot = np.sum((y_test - np.mean(y_train)) ** 2)
+        q2 = 1 - ss_res / ss_tot
+        q2_scores.append(q2)
+    
+    return - np.mean(q2_scores)
 
+def fit_kpls(train_data, validation_data, test_data, params = None):
+    # used for training
+    X_train = train_data.iloc[:, 2:-1]
+    Y_train = train_data.iloc[:, -1]
 
-# %% find gamma and latent variables
+    # used for cv
+    X_validation = validation_data.iloc[:, 2:-1]
+    Y_validation = validation_data.iloc[:, -1]
 
-gamma_list = [0.0005, 0.001, 0.0025, 0.05, 0.025, 0.01]
-latent_vars_list = list(range(1, 11))  # 1..10
+    if params == None:
+        gamma, n_components, q2, q2_log = run_genetic(
+            population_size=10,
+            generations=30,
+            gamma_low=1e-9,
+            gamma_high=100,
+            X=X_validation,
+            y=Y_validation,
+            fitness=fitness
+        )
 
-# --- Store results ---
-Q2_matrix = np.full((len(gamma_list), len(latent_vars_list)), np.nan)
+        # Split into two columns
+        iters = q2_log[:, 0]
+        Q2s = q2_log[:, 1]
 
-# --- Loop over gamma and latent variable counts ---
-for gi, gamma in enumerate(gamma_list):
-    # Compute kernel & center it
+        # Plot
+        plt.figure(figsize=(6,4))
+        plt.plot(iters, Q2s, marker='o', linestyle='-', color='b')
+        plt.xlabel("Iteration")
+        plt.ylabel("Q2")
+        plt.title("Q2 vs Iteration")
+        plt.grid(True)
+        plt.show()
+    else:
+        gamma = params[0]
+        n_components = params[1]
+
     K_train = rbf_kernel(X_train, X_train, gamma=gamma)
     centerer = KernelCenterer().fit(K_train)
     K_train_c = centerer.transform(K_train)
+    
+    pls = PLSRegression(n_components)
+    pls.fit(K_train_c, Y_train)
+    
+    # evaluating test partition
+    X_test = test_data1.iloc[:, 2:-1]
+    Y_test = test_data1.iloc[:, -1]
+    K_test = rbf_kernel(X_test, X_train, gamma=gamma)
+    K_test_c = centerer.transform(K_test)
 
-    K_validation = rbf_kernel(X_validation, X_train, gamma=gamma)
-    K_validation_c = centerer.transform(K_validation)
+    Y_pred = pls.predict(K_test_c)
+    rmse = np.sqrt(mean_squared_error(Y_test, Y_pred))
+    mae  = mean_absolute_error(Y_test, Y_pred)
+    print(f"RMSE = {rmse:.4f}, MAE = {mae:.4f}")
 
-    # Loop over number of latent variables
-    for li, n_components in enumerate(latent_vars_list):
-        pls = PLSRegression(n_components=n_components)
-        pls.fit(K_train_c, Y_train)
+    test_unit = test_data[test_data["unit number"] == 20]
+    # Prepare inputs
+    Xunit = test_unit.iloc[:, 2:-1].to_numpy()
+    K_unit = rbf_kernel(Xunit, X_train, gamma=gamma)
+    Kunit_c = centerer.transform(K_unit)
+    Yunit = test_unit["RUL"].to_numpy()
 
-        # Predict on validation kernel
-        Y_pred_val = pls.predict(K_validation_c).ravel()
+    # Predict
+    Ypred = pls.predict(Kunit_c).ravel()
+    Ypred = np.clip(Ypred, 0, None)
 
-        # Compute Q²
-        PRESS = np.sum((Y_validation - Y_pred_val)**2)
-        TSS = np.sum((Y_validation - np.mean(Y_train))**2)
-        Q2 = 1 - PRESS / TSS if TSS > 0 else np.nan
+    # Observed vs Predicted (scatter)
+    plt.figure(figsize=(5, 5))
+    plt.scatter(Yunit, Ypred, s=15, c="tab:blue", alpha=0.7)
+    plt.plot([Yunit.min(), Yunit.max()], [Yunit.min(), Yunit.max()], "k--", lw=1.2)
+    plt.xlabel("Observed RUL")
+    plt.ylabel("Predicted RUL")
+    plt.title(f"Validation - Observed vs Predicted (Unit {20})")
+    plt.grid(True)
+    plt.axis("equal")
+    plt.show()
 
-        Q2_matrix[gi, li] = Q2
 
-# --- Find best gamma and LV ---
-best_idx = np.unravel_index(np.nanargmax(Q2_matrix), Q2_matrix.shape)
-best_gamma = gamma_list[best_idx[0]]
-best_lv = latent_vars_list[best_idx[1]]
-best_Q2 = Q2_matrix[best_idx]
+#params = None
+params = [ 0.0025, 5]
+fit_kpls(train_data1, validation_data1, test_data1, params)
 
-print("Best parameters:")
-print(f"  γ (gamma) = {best_gamma}")
-print(f"  Latent variables = {best_lv}")
-print(f"  Q² (validation) = {best_Q2:.4f}")
 
-# --- Optional: Plot heatmap of Q² ---
-import matplotlib.pyplot as plt
-import seaborn as sns
 
-plt.figure(figsize=(10, 6))
-sns.heatmap(Q2_matrix, annot=True, fmt=".2f", xticklabels=latent_vars_list, yticklabels=gamma_list, cmap='viridis')
-plt.xlabel('# Latent Variables')
-plt.ylabel('Gamma')
-plt.title('Validation Q² for different (gamma, LV) combinations')
-plt.show()
-
-# %% Fitting the model
-gamma = 0.01
-n_component = 5
-
-K_train = rbf_kernel(X_train, X_train, gamma=gamma)   # symmetric kernel Gram matrix
-centerer = KernelCenterer().fit(K_train)
-K_train_c = centerer.transform(K_train)
-
-# 3. Fit PLS regression on the kernel matrix
-pls = PLSRegression(n_components)  # e.g., 10 latent components
-pls.fit(K_train_c, Y_train)
-
-# 5. Predict and evaluate
-Y_pred = pls.predict(K_validation_c)
-
-rmse = np.sqrt(mean_squared_error(Y_validation, Y_pred))
-mae  = mean_absolute_error(Y_validation, Y_pred)
-print(f"RMSE = {rmse:.4f}, MAE = {mae:.4f}")
-
-# %% Evaluate the test dataset
-
-X_test = test_data1.iloc[:, 2:-1]
-Y_test = test_data1.iloc[:, -1]
-
-K_test = rbf_kernel(X_test, X_train, gamma) 
-K_test_c = centerer.transform(K_test)
-Y_pred = pls.predict(K_test_c)
-rmse = np.sqrt(mean_squared_error(Y_test, Y_pred))
-mae  = mean_absolute_error(Y_test, Y_pred)
-print(f"RMSE = {rmse:.4f}, MAE = {mae:.4f}")
