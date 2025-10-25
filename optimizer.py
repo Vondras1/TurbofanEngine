@@ -15,7 +15,7 @@ from sklearn.metrics import pairwise_distances
 from joblib import Parallel, delayed
 from sklearn.metrics import pairwise_distances
 import numpy as np
-from kernel import cauchy_kernel, cauchy_gamma_bounds, matern12_kernel, matern12_gamma_bounds
+from kernel import cauchy_kernel, cauchy_gamma_bounds, matern12_kernel
 
 def gamma_bounds_from_data(X, kernel_f=rbf_kernel, spread=3, tiny=1e-300):
     if kernel_f == rbf_kernel:

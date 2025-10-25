@@ -163,9 +163,6 @@ def normalize_data(train_data, validation_data, test_data, normRUL=False):
 
     return train_data, validation_data, test_data, mu_train, sd_train
 
-# normalize
-train_data1, validation_data1, test_data1, mu_train, sd_train = normalize_data(train_data1, validation_data1, test_data1)
-
 # %% 
 from sklearn.cross_decomposition import PLSRegression
 from sklearn.metrics.pairwise import rbf_kernel, laplacian_kernel, chi2_kernel
@@ -350,16 +347,20 @@ def process_dataset(train_data, validation_data, test_data, dataset_name):
 
 train_data1, validation_data1, dropped_cols1 = train_from_file("./NASA-Turbofan-data/data/train_FD001.txt")
 test_data1 = test_from_file("./NASA-Turbofan-data/data/test_FD001.txt", "./NASA-Turbofan-data/data/RUL_FD001.txt", dropped_cols=dropped_cols1)
+train_data1, validation_data1, test_data1, mu_train, sd_train = normalize_data(train_data1, validation_data1, test_data1)
 process_dataset(train_data1, validation_data1, test_data1, "FD001")
 
 train_data2, validation_data2, dropped_cols2 = train_from_file("./NASA-Turbofan-data/data/train_FD002.txt")
 test_data2 = test_from_file("./NASA-Turbofan-data/data/test_FD002.txt", "./NASA-Turbofan-data/data/RUL_FD002.txt", dropped_cols=dropped_cols2)
+train_data2, validation_data2, test_data2, mu_train, sd_train = normalize_data(train_data2, validation_data2, test_data2)
 process_dataset(train_data2, validation_data2, test_data2, "FD002")
 
 train_data3, validation_data3, dropped_cols3 = train_from_file("./NASA-Turbofan-data/data/train_FD003.txt")
 test_data3 = test_from_file("./NASA-Turbofan-data/data/test_FD003.txt", "./NASA-Turbofan-data/data/RUL_FD003.txt", dropped_cols=dropped_cols3)
+train_data3, validation_data3, test_data3, mu_train, sd_train = normalize_data(train_data3, validation_data3, test_data3)
 process_dataset(train_data3, validation_data3, test_data3, "FD003")
 
 train_data4, validation_data4, dropped_cols4 = train_from_file("./NASA-Turbofan-data/data/train_FD004.txt")
 test_data4 = test_from_file("./NASA-Turbofan-data/data/test_FD004.txt", "./NASA-Turbofan-data/data/RUL_FD004.txt", dropped_cols=dropped_cols4)
+train_data4, validation_data4, test_data4, mu_train, sd_train = normalize_data(train_data4, validation_data4, test_data4)
 process_dataset(train_data4, validation_data4, test_data4, "FD004")
