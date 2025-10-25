@@ -220,9 +220,9 @@ def fit_kpls(train_data, validation_data, kernel_f=rbf_kernel, method_name="RBF_
         n_lv = int(res["n_lv"])
 
         train_q2   = res["q2"]
-        pls, centerer = fit_model(X_train, y_train, n_lv, gamma)
+        pls, centerer = fit_model(X_train, y_train, n_lv, kernel_f, gamma)
         validation_rmse, validation_mae, validation_q2 = predict(
-            X_train, y_train, X_validation, y_validation, pls, centerer, gamma=kernel_f)
+            X_train, y_train, X_validation, y_validation, pls, centerer, gamma, kernel_f)
 
         output.append({
             "n_lv": n_lv,
@@ -238,49 +238,39 @@ def fit_kpls(train_data, validation_data, kernel_f=rbf_kernel, method_name="RBF_
     return pd.DataFrame(output)
 
 def eval_test(test_data, train_data, train_results, kernel_f, method_name):
-    output = []
-
-    #prepare datasets with only sensor data
     X_train = train_data.iloc[:, 2:-1]
     y_train = train_data.iloc[:, -1]
-
     X_test = test_data.iloc[:, 2:-1]
     y_test = test_data.iloc[:, -1]
 
     best_row_train = train_results.loc[train_results["q2_train_cv"].idxmax()]
     best_row_val = train_results.loc[train_results["q2_validation"].idxmax()]
 
-    gamma_cv = best_row_train["gamma"]
-    n_lv_cv  = int(best_row_train["n_lv"])
+    def eval_row(row):
+        gamma = row["gamma"]
+        n_lv = int(row["n_lv"])
+        pls, centerer = fit_model(X_train, y_train, n_lv, kernel_f, gamma)
+        rmse, mae, q2 = predict(X_train, y_train, X_test, y_test, pls, centerer, gamma, kernel_f)
 
-    gamma_val = best_row_val["gamma"]
-    n_lv_val = int(best_row_val["n_lv"])
+        test_row = row.copy()
+        test_row["rmse_test"] = rmse
+        test_row["mae_test"] = mae
+        test_row["q2_test"] = q2
+        test_row["method"] = f"{method_name}"
+        return test_row
 
-    # train the models
-    pls_cv , centerer_cv  = fit_model(X_train, n_lv_cv , kernel_f, gamma_cv )
-    pls_val, centerer_val = fit_model(X_train, n_lv_val, kernel_f, gamma_val)
+    output = [eval_row(best_row_train)]
 
-    rmse_cv, mae_cv, q2_cv = predict(X_train, y_train, X_test, y_test, pls_cv, centerer_cv, gamma_cv, kernel_f)
-    rmse_val, mae_val, q2_val = predict(X_train, y_train, X_test, y_test, pls_val, centerer_val, gamma_val, kernel_f)
-    
-    test_row_cv = best_row_train.copy()
-    test_row_cv["rmse_test"] = rmse_cv
-    test_row_cv["mae_test"] = mae_cv
-    test_row_cv["q2_test"] = q2_cv
+    if best_row_train.name != best_row_val.name:
+        output.append(eval_row(best_row_val))
 
-    test_row_val = best_row_val.copy()
-    test_row_val["rmse_test"] = rmse_val
-    test_row_val["mae_test"] = mae_val
-    test_row_val["q2_test"] = q2_val
-
-    # Combine into one output DataFrame
-    output = pd.DataFrame([test_row_cv, test_row_val])
-    return output
+    return pd.DataFrame(output)
 
 def plot_unit(train_data, test_data, params, dataset_name, unit_id):
     gamma = params.gamma
     n_lv = params.n_lv
     kernel_f = params.kernel_f
+    method = params.method_name
 
     X_train = train_data.iloc[:, 2:-1]
     y_train = train_data.iloc[:, -1]
@@ -297,24 +287,31 @@ def plot_unit(train_data, test_data, params, dataset_name, unit_id):
     Ypred = pls.predict(Kunit_c).ravel()
     Ypred = np.clip(Ypred, 0, None)
 
-    # Observed vs Predicted (scatter)
+    rmse_unit = np.sqrt(mean_squared_error(Yunit, Ypred))
+
     plt.figure(figsize=(5, 5))
     plt.scatter(Yunit, Ypred, s=15, c="tab:blue", alpha=0.7)
     plt.plot([Yunit.min(), Yunit.max()], [Yunit.min(), Yunit.max()], "k--", lw=1.2)
     plt.xlabel("Observed RUL")
     plt.ylabel("Predicted RUL")
-    plt.title(f"Validation - Observed vs Predicted (Unit {unit_id})")
+
+    plt.title(
+        f"{dataset_name} — Unit {unit_id}\n"
+        f"{method}, γ={gamma:.3g}, RMSE={rmse_unit:.3f}"
+    )
+
     plt.grid(True)
     plt.axis("equal")
+    plt.tight_layout()
     plt.show()
 
 def process_dataset(train_data, validation_data, test_data, dataset_name):
     print("RBF kernel")
-    train_results_rbf = fit_kpls(train_data, validation_data, kernel_f=rbf_kernel, method_name="RBF", max_lv=1)
+    train_results_rbf = fit_kpls(train_data, validation_data, kernel_f=rbf_kernel, method_name="RBF", max_lv=12)
     test_results_rbf = eval_test(test_data, train_data, train_results_rbf, kernel_f=rbf_kernel, method_name="RBF")
 
     print("Laplacian kernel")
-    train_results_laplac = fit_kpls(train_data, validation_data, kernel_f=laplacian_kernel, method_name="Laplacian", max_lv=1)
+    train_results_laplac = fit_kpls(train_data, validation_data, kernel_f=laplacian_kernel, method_name="Laplacian", max_lv=12)
     test_results_laplac = eval_test(test_data, train_data, train_results_laplac, kernel_f=laplacian_kernel, method_name="Laplacian")
 
     # print("Matern12 kernel")
@@ -322,7 +319,7 @@ def process_dataset(train_data, validation_data, test_data, dataset_name):
     # test_results_matern = eval_test(test_data, train_data, train_results_matern, kernel_f=matern12_kernel, method_name="Matern12")
 
     print("Cauchy kernel")
-    train_results_cauchy = fit_kpls(train_data, validation_data, kernel_f=cauchy_kernel, method_name="Cauchy", max_lv=1)
+    train_results_cauchy = fit_kpls(train_data, validation_data, kernel_f=cauchy_kernel, method_name="Cauchy", max_lv=12)
     test_results_cauchy = eval_test(test_data, train_data, train_results_cauchy, kernel_f=cauchy_kernel, method_name="Cauchy")
 
     train_results_all = pd.concat(
@@ -339,13 +336,12 @@ def process_dataset(train_data, validation_data, test_data, dataset_name):
 
     best_row_train = test_results_all.loc[test_results_all["rmse_test"].idxmin()]
 
-    units_to_plot = [3,12,20]
+    units_to_plot = [20, 40, 60]
     for unit_id in units_to_plot:
         plot_unit(train_data, test_data, best_row_train, dataset_name, unit_id)
     
     test_results_all.drop(columns=["kernel_f"], inplace=True)
     test_results_all.to_csv(dataset_name + "_test.csv")
-
 
 train_data1, validation_data1, dropped_cols1 = train_from_file("./NASA-Turbofan-data/data/train_FD001.txt")
 test_data1 = test_from_file("./NASA-Turbofan-data/data/test_FD001.txt", "./NASA-Turbofan-data/data/RUL_FD001.txt", dropped_cols=dropped_cols1)

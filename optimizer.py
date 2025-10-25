@@ -142,9 +142,9 @@ def optimize(data, max_lv=20, folds=8, show_plot=True, kernel_f=rbf_kernel, meth
     if show_plot:
         plt.figure()
         plt.plot(df_results["n_lv"], df_results["q2"], marker="o")
-        plt.xlabel("Number of latent variables (n_lv)")
-        plt.ylabel("CV $Q^2$")
-        plt.title(f"{method_name} CV $Q^2$ vs n_lv, K_folds={folds}")
+        plt.xlabel("Number of latent variables")
+        plt.ylabel("$Q^2$")
+        plt.title(f"{method_name} - $Q^2$ vs n_lv, Cross validation, K_folds={folds}")
         plt.grid(True)
         plt.show()
 
