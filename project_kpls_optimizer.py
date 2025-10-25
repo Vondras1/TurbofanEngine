@@ -199,12 +199,11 @@ def predict(X_train, y_train, X, y, pls, centerer, gamma, kernel_f):
     return rmse, mae, q2
 
 
-def fit_kpls(train_data, validation_data, kernel_f=rbf_kernel, method_name="RBF_kernel"):
-
+def fit_kpls(train_data, validation_data, kernel_f=rbf_kernel, method_name="RBF_kernel", max_lv=13):
     output = []
 
     #optimize gamma on training data
-    opt_results = optimize(train_data, max_lv=13, folds=10, kernel_f=kernel_f, method_name=method_name)
+    opt_results = optimize(train_data, max_lv, folds=10, kernel_f=kernel_f, method_name=method_name)
     best_row = opt_results.loc[opt_results["q2"].idxmax()]
     print(f"Best TRAIN n_lv={int(best_row.n_lv)}, gamma={best_row.gamma:.6g}, Q^2={best_row.q2:.4f}")
     
@@ -311,11 +310,11 @@ def plot_unit(train_data, test_data, params, dataset_name, unit_id):
 
 def process_dataset(train_data, validation_data, test_data, dataset_name):
     print("RBF kernel")
-    train_results_rbf = fit_kpls(train_data, validation_data, kernel_f=rbf_kernel, method_name="RBF")
+    train_results_rbf = fit_kpls(train_data, validation_data, kernel_f=rbf_kernel, method_name="RBF", max_lv=1)
     test_results_rbf = eval_test(test_data, train_data, train_results_rbf, kernel_f=rbf_kernel, method_name="RBF")
 
     print("Laplacian kernel")
-    train_results_laplac = fit_kpls(train_data, validation_data, kernel_f=laplacian_kernel, method_name="Laplacian")
+    train_results_laplac = fit_kpls(train_data, validation_data, kernel_f=laplacian_kernel, method_name="Laplacian", max_lv=1)
     test_results_laplac = eval_test(test_data, train_data, train_results_laplac, kernel_f=laplacian_kernel, method_name="Laplacian")
 
     # print("Matern12 kernel")
@@ -323,26 +322,29 @@ def process_dataset(train_data, validation_data, test_data, dataset_name):
     # test_results_matern = eval_test(test_data, train_data, train_results_matern, kernel_f=matern12_kernel, method_name="Matern12")
 
     print("Cauchy kernel")
-    train_results_cauchy = fit_kpls(train_data, validation_data, kernel_f=cauchy_kernel, method_name="Cauchy")
+    train_results_cauchy = fit_kpls(train_data, validation_data, kernel_f=cauchy_kernel, method_name="Cauchy", max_lv=1)
     test_results_cauchy = eval_test(test_data, train_data, train_results_cauchy, kernel_f=cauchy_kernel, method_name="Cauchy")
 
     train_results_all = pd.concat(
         [train_results_rbf, train_results_laplac, train_results_cauchy],
         ignore_index=True
     )
+    train_results_all.drop(columns=["kernel_f"], inplace=True)
     train_results_all.to_csv(dataset_name + "_train.csv")
 
     test_results_all = pd.concat(
         [test_results_rbf, test_results_laplac, test_results_cauchy],
         ignore_index=True
     )
-    train_results_all.to_csv(dataset_name + "_test.csv")
 
     best_row_train = test_results_all.loc[test_results_all["rmse_test"].idxmin()]
 
     units_to_plot = [3,12,20]
     for unit_id in units_to_plot:
         plot_unit(train_data, test_data, best_row_train, dataset_name, unit_id)
+    
+    test_results_all.drop(columns=["kernel_f"], inplace=True)
+    test_results_all.to_csv(dataset_name + "_test.csv")
 
 
 train_data1, validation_data1, dropped_cols1 = train_from_file("./NASA-Turbofan-data/data/train_FD001.txt")
