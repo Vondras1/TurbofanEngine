@@ -1,73 +1,40 @@
-# Main goal (Level A)
+# Turbofan Engine - Remaining Useful Life (RUL) Prediction
 
-Forecast when the engine is due to maintenance
-Predict the remaining useful life of test partition observations, based on the models
-calibrated with the training data. You know that in the training partition, the engine runs
-until failure. That means, the maximum operating cycle for a unit +1 was the failure
-operation. Make four prediction models and predict the remaining useful life for the test
-partition, using the model calibrated with the training data partition.
-Note: You need all four operational settings datasets, both training and testing partitions
-for this task.
+This repository contains code and results for predicting the Remaining Useful Life (RUL) of aircraft turbofan engines using NASA turbofan datasets (FD001–FD004). The code implements data loading, preprocessing, Partial Least Squares (PLS) regression, Kernel PLS (KPLS) with several kernels, and hyperparameter optimization (grid/optimizer and genetic algorithms).
 
+This README was generated from the source files in this folder. It summarizes the project structure, main scripts, data, usage examples, dependencies, and notes.
 
-# Week 2
+## Quick summary
+- Goal: Train models on the training partitions and predict RUL on test partitions for FD001..FD004 datasets.
+- Approaches included: classical PLS, Kernel PLS (RBF, Laplacian, Cauchy, polynomial), hyperparameter optimization (custom optimizer), and a genetic search for kernel gamma and latent variables.
+- Outputs: CSV comparison files (predicted vs true RUL), plots (residuals, observed_vs_predicted, press/q2 curves), and per-dataset results saved under `Results/`.
 
-In this week, you will be getting familiar with the data.  
-At the end of the week, the goal is to have:
-- Clean data
-- Efficiently imported into your workspace
-- Visualized
-- An understanding of what the data is used for  
+## Folder layout
 
-The PDF you will return will have **max. 2 pages**.
+- `NASA-Turbofan-data/` — expected location of the raw NASA data files (train/test/RUL files). The code assumes files such as `train_FD001.txt`, `test_FD001.txt`, `RUL_FD001.txt` exist in subfolders under here.
+- `load_data.py` — helper script to load and inspect the raw text datasets and run a small PCA visualization.
+- `project_pls.py` — main PLS pipeline: data loading, filtering (zero-variance sensors), rolling-window features (mean/max/min), RUL counting, normalization, PLS cross-validation, final training and evaluation, and plots.
+- `project_kpls.py`, `project_kpls_genetic.py`, `project_kpls_optimizer.py` — Kernel PLS variants. They include KPLS fitting, genetic search (`run_genetic`) and an optimizer-based search strategy.
+- `kernel.py` — custom kernels (Cauchy, polynomial) and helper functions for gamma bounds.
+- `optimizer.py` — scalar/bounded optimizer that searches kernel parameters across latent variables using GroupKFold and returns Q² scores.
+- `genetic.py` — genetic algorithm implementation that searches for kernel gamma and number of latent variables (n_lv) using cross-validated Q² as fitness.
+- `print_data.py` — small utility for quickly printing dataset info.
+- `optimizer.py`, `kernel.py`, `genetic.py` — supporting code for KPLS hyperparameter selection.
+- `comparison_results.csv`, `test_comparison_results.csv` — example outputs containing Y_true and Y_pred values.
+- `Results/` — directory used to save results (CSV and image files).
 
----
+## Data description
 
-## Breakdown of the points
+The project uses the NASA turbofan engine degradation simulation datasets. Each input text file has rows that represent cycles and columns that include:
 
-- [Yes] **0.25p** – an established communication channel and appropriate strategy for code sharing.  
-- [Yes] **0.25p** – data correctly imported into appropriate matrices completely: observations as rows, variables (predictors) as columns.  
-- [ ] **0.5p** – identification of challenges of the data (e.g. time series not synchronized, missing values, extra variables, unknown physical meanings, etc.).  
-- [ ] **0.5p** – a visualization and comment on the dataset (variable distribution, number of observations, type of measurements – time series or not).  
-- [ ] **3p** – exploratory data analysis with PCA: explain variable correlations and visualize the PCs using biplots, loading plots.(*only on the X matrix – we are not looking at the response variable now*)  
-- [ ] **0.5p** – identification of pretreatment steps, and a plan on how to do data pretreatment.  
+1) unit number
+2) time (cycles)
+3–5) three operating settings
+6–26) sensor measurements (21 sensors) — source code refers to `sensor measurement 1..21`
 
-&nbsp;  
-&nbsp;  
+The training partition contains full life runs (run to failure). The test partition contains truncated runs and separate RUL files containing ground-truth RUL per unit.
 
-# Week 3–4 (15.09 - 28.09)
-## Data Pretreatment and Modelling Plan
+Files in the repo (examples):
+- `FD001_train.txt`, `FD001_test.txt`, `RUL_FD001.txt` — for dataset FD001 (the code references these names under `NASA-Turbofan-data/data/`).
 
-Based on your initial evaluation, the received feedback and the strategies of other groups, perform **data pretreatment**.  
-There will be a **max. 2 pages** addition to your project PDF.
-
----
-
-## Breakdown of the points – Data Pretreatment
-
-- [ ] **0.5p** – feedback incorporation and adjustment of the initial pretreatment plan  
-- [ ] **0.5p** – data centering and scaling techniques  
-- [ ] **0.5p** – evaluation of extreme/missing values and mitigating actions, data synchronization (for time series), sampling  
-- [ ] **0.5p** – visualizing pretreated data  
-
----
-
-## Modelling Plan
-
-Make a modelling plan for your modelling goal. Create a **flowchart** of the operations needed to accomplish the task, and assign roles to the team members for each step.  
-
-The start of each flowchart should be the **cleaned data**, and the end of it should be the **modelling goal achieved**.  
-If there is more than one modelling goal, the flowchart can take multiple paths.  
-There will be a **max. 2 pages** addition to your project PDF.
-
----
-
-## Breakdown of the points – Modelling Plan
-
-- [ ] **0.5p** – modelling goal (What is the purpose of your data analysis?)  
-- [ ] **0.5p** – model calibration strategy: tools used, methodology, data used  
-- [ ] **0.5p** – model validation strategy: scope of validation, methodology  
-- [ ] **0.5p** – model testing strategy: metrics and data used  
-- [ ] **0.5p** – description of the mathematical methods used in modelling  
-- [ ] **0.5p** – model diagram / operations flowchart  
 
