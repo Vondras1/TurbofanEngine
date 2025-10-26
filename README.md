@@ -2,8 +2,6 @@
 
 This repository contains code and results for predicting the Remaining Useful Life (RUL) of aircraft turbofan engines using NASA turbofan datasets (FD001–FD004). The code implements data loading, preprocessing, Partial Least Squares (PLS) regression, Kernel PLS (KPLS) with several kernels, and hyperparameter optimization (grid/optimizer and genetic algorithms).
 
-This README was generated from the source files in this folder. It summarizes the project structure, main scripts, data, usage examples, dependencies, and notes.
-
 ## Quick summary
 - Goal: Train models on the training partitions and predict RUL on test partitions for FD001..FD004 datasets.
 - Approaches included: classical PLS, Kernel PLS (RBF, Laplacian, Cauchy, polynomial), hyperparameter optimization (custom optimizer), and a genetic search for kernel gamma and latent variables.
