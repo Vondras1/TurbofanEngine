@@ -83,12 +83,12 @@ def center_kernel(K_tr, K_val):
     K_val_c = K_val - mean_rows_val - mean_cols_tr + grand_tr
     return K_tr_c, K_val_c
 
-def optimize(data, max_lv=20, folds=8, show_plot=True, kernel_f=rbf_kernel, method_name = "RBF_kernel"):
+def optimize(data, max_lv=20, folds=3, show_plot=True, parallel=False, kernel_f=rbf_kernel, method_name = "RBF_kernel"):
     groups = data["unit number"].values
     X = data.iloc[:, 2:-1]
     y = data.iloc[:, -1]
     
-    gkf = GroupKFold(n_splits=folds)
+    gkf = GroupKFold(n_splits=2)
     splits = list(gkf.split(X, y, groups=groups))
     gamma_low, gamma_high = gamma_bounds_from_data(X, kernel_f)
     print(f"Gamma bounds: ({gamma_low}; {gamma_high})")
@@ -130,9 +130,14 @@ def optimize(data, max_lv=20, folds=8, show_plot=True, kernel_f=rbf_kernel, meth
         return {"n_lv": n_lv, "gamma": res.x, "q2": -res.fun}
     
     print("Optimizer starts...")
-    results = Parallel(n_jobs=-1, prefer="processes", verbose=10)(
-        delayed(solve_one)(n_lv) for n_lv in range(1, max_lv + 1)
-    )
+
+    if parallel:
+        results = Parallel(n_jobs=4, prefer="processes", verbose=10)(
+            delayed(solve_one)(n_lv) for n_lv in range(1, max_lv + 1)
+        )
+    else:
+        for n_lv in range(1, 1+max_lv):
+            solve_one(n_lv)
 
     results = sorted(results, key=lambda d: d["n_lv"])
 
