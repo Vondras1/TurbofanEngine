@@ -218,21 +218,23 @@ def pls_groupcv_press_q2(X, Y, groups, maxLV=10, n_splits=5):
         "maxLV": PRESS_mean.size
     }
 
-def plot_lv_curves(res):
+def plot_lv_curves(res, prefix):
     xs = np.arange(1, res["maxLV"] + 1)
 
     plt.figure(figsize=(7,4.2))
     plt.plot(xs, res["PRESS_mean"], "-o", linewidth=1.3); plt.grid(True)
     plt.xlabel("Number of latent variables"); plt.ylabel("mean PRESS$_{CV}$")
     plt.title(f"PRESS$_{{CV}}$ (mean, K={res['Keff']})")
-    plt.axvline(res["press_best"], linestyle="--"); plt.show()
+    plt.axvline(res["press_best"], linestyle="--")
+    plt.savefig(f"press_best{prefix}.png")
 
     plt.figure(figsize=(7,4.2))
     plt.plot(xs, res["Q2_mean"], "-o", linewidth=1.3); plt.grid(True)
     plt.xlabel("Number of latent variables"); plt.ylabel("mean Q$^2_{CV}$")
     plt.title(f"Q$^2_{{CV}}$ (mean, K={res['Keff']})")
     ymin = min(-0.2, float(np.min(res["Q2_mean"])) - 0.05)
-    plt.ylim([ymin, 1.0]); plt.axvline(res["q2_best"], linestyle="--"); plt.show()
+    plt.ylim([ymin, 1.0]); plt.axvline(res["q2_best"], linestyle="--")
+    plt.savefig(f"q2_best{prefix}.png")
 
 
 # X1 = train_data1.iloc[:, 2:-1]
@@ -286,7 +288,15 @@ def final_training(train_data, validation_data, test_data, prefix="", n_componen
     mae = mean_absolute_error(Yv, Ypred)
     r2 = r2_score(Yv, Ypred)
 
-    print(f"Validation dataset metrics: RMSE={rmse:.3f}, MAE={mae:.3f}, R²={r2:.3f}")
+    # Q² (predictive ability) computed using training-set mean:
+    # Q² = 1 - PRESS / TSS, where PRESS = sum((Y_true - Y_pred)^2) and
+    # TSS = sum((Y_true - mean(Y_train))^2). Use a small eps to avoid div by 0.
+    press = np.sum((Yv - Ypred) ** 2)
+    Ymean_train = float(np.mean(Y1))
+    tss = np.sum((Yv - Ymean_train) ** 2)
+    q2 = 1.0 - press / max(tss, np.finfo(float).eps)
+
+    print(f"Validation dataset metrics: RMSE={rmse:.3f}, MAE={mae:.3f}, R²={r2:.3f}, Q²={q2:.3f}")
 
     # window = 25: RMSE=33.651, MAE=26.502, R²=0.737
     # window = 20: RMSE=34.457, MAE=27.083, R²=0.725
@@ -326,7 +336,7 @@ def final_training(train_data, validation_data, test_data, prefix="", n_componen
     plt.title(f"Validation - Residuals for Unit {unit_id}")
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
+    plt.savefig(f"residuals{prefix}.png")
 
     # Observed vs Predicted (scatter)
     plt.figure(figsize=(5, 5))
@@ -337,7 +347,7 @@ def final_training(train_data, validation_data, test_data, prefix="", n_componen
     plt.title(f"Validation - Observed vs Predicted (Unit {unit_id})")
     plt.grid(True)
     plt.axis("equal")
-    plt.show()
+    plt.savefig(f"observed_vs_predicted{prefix}.png")
 
     # Predict on test
     Yt, Ypred = predict_on_df(model=pls2, df=test_data)
@@ -356,7 +366,13 @@ def final_training(train_data, validation_data, test_data, prefix="", n_componen
     mae = mean_absolute_error(Yt, Ypred)
     r2 = r2_score(Yt, Ypred)
 
-    print(f"Test dataset metrics: RMSE={rmse:.3f}, MAE={mae:.3f}, R²={r2:.3f}")
+    # Q² for test set (using training-set mean)
+    press = np.sum((Yt - Ypred) ** 2)
+    Ymean_train = float(np.mean(Y1))
+    tss = np.sum((Yt - Ymean_train) ** 2)
+    q2 = 1.0 - press / max(tss, np.finfo(float).eps)
+
+    print(f"Test dataset metrics: RMSE={rmse:.3f}, MAE={mae:.3f}, R²={r2:.3f}, Q²={q2:.3f}")
 
     # Test unit plot
     unit_id = test_unit_id
@@ -397,7 +413,7 @@ def final_training(train_data, validation_data, test_data, prefix="", n_componen
     plt.plot([Yunit.min(), Yunit.max()], [Yunit.min(), Yunit.max()], "k--", lw=1.2)
     plt.xlabel("Observed RUL")
     plt.ylabel("Predicted RUL")
-    plt.title(f"TEST - Observed vs Predicted (Unit {unit_id})")
+    plt.title(f"{prefix} Observed vs Predicted (Unit {unit_id})")
     plt.grid(True)
     plt.axis("equal")
     obs_fname = f"obs_vs_pred_test_unit_{unit_id}_{prefix}.png" if prefix else f"obs_vs_pred_test_unit_{unit_id}.png"
@@ -439,8 +455,11 @@ def main():
         g_cv = t_copy.iloc[:, 0]
 
         res = pls_groupcv_press_q2(X_cv.to_numpy(), Y_cv.to_numpy(), g_cv.to_numpy(), maxLV=10, n_splits=5)
-        plot_lv_curves(res)
+        plot_lv_curves(res, prefix)
         print(f"Best by PRESS: {res['press_best']}   Best by Q²: {res['q2_best']}")
+        print("TEST RESULTS: ", res)
+        print("qfolds: ", res["Q2_folds"])
+        print("qfolds max: ", np.max(res["Q2_folds"], axis=0))
 
         print(f"\n--- Running final training for {prefix} ---")
         final_training(train_d, val_d, test_d, prefix=prefix)
