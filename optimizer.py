@@ -15,7 +15,7 @@ from sklearn.metrics import pairwise_distances
 from joblib import Parallel, delayed
 from sklearn.metrics import pairwise_distances
 import numpy as np
-from kernel import cauchy_kernel, cauchy_gamma_bounds, matern12_kernel
+from kernel import cauchy_kernel, cauchy_gamma_bounds, polynomial_kernel
 
 def gamma_bounds_from_data(X, kernel_f=rbf_kernel, spread=3, tiny=1e-300):
     if kernel_f == rbf_kernel:
@@ -27,18 +27,10 @@ def gamma_bounds_from_data(X, kernel_f=rbf_kernel, spread=3, tiny=1e-300):
         m = np.median(nz)
         gamma0 = 1.0 / (2.0 * (m**2) + 1e-12)
 
-    elif kernel_f == laplacian_kernel:
-        # L1 distances for Laplacian
-        d1 = pairwise_distances(X, metric='manhattan')
-        nz = d1[d1 > 0]
-        if nz.size == 0:
-            return 1e-6, 1.0
-        m = np.median(nz)
-        gamma0 = 1.0 / (m + 1e-12)
     elif kernel_f == cauchy_kernel:
         return cauchy_gamma_bounds(X, spread)
-    elif kernel_f == matern12_kernel:
-        return 1e-6, 1e+2
+    elif kernel_f == polynomial_kernel:
+        return 1e-3, 10e2
     else:
         raise ValueError("Unsupported kernel")
 
@@ -63,27 +55,7 @@ def gamma_bounds_from_blocks(blocks):
     g_high = g0 * 1e+3
     return g_low, g_high
 
-def center_kernel(K_tr, K_val):
-    """
-    Center K_tr and K_val using training statistics.
-    K_tr: (n x n), K_val: (m x n)
-    Returns: K_tr_c, K_val_c
-    """
-    # training means
-    mean_rows_tr = K_tr.mean(axis=1, keepdims=True)      # (n,1)
-    mean_cols_tr = K_tr.mean(axis=0, keepdims=True)      # (1,n)
-    grand_tr     = K_tr.mean()                            # scalar
-
-    # center train
-    K_tr_c = K_tr - mean_rows_tr - mean_cols_tr + grand_tr
-
-    # center val (note: use training column means; row means from val)
-    mean_rows_val = K_val.mean(axis=1, keepdims=True)    # (m,1)
-    # reuse mean_cols_tr and grand_tr from training
-    K_val_c = K_val - mean_rows_val - mean_cols_tr + grand_tr
-    return K_tr_c, K_val_c
-
-def optimize(data, max_lv=20, folds=3, show_plot=True, parallel=False, kernel_f=rbf_kernel, method_name = "RBF_kernel"):
+def optimize(data, max_lv=20, folds=3, show_plot=True, n_jobs=5, kernel_f=rbf_kernel, method_name = "RBF_kernel"):
     groups = data["unit number"].values
     X = data.iloc[:, 2:-1]
     y = data.iloc[:, -1]
@@ -131,8 +103,8 @@ def optimize(data, max_lv=20, folds=3, show_plot=True, parallel=False, kernel_f=
     
     print("Optimizer starts...")
 
-    if parallel:
-        results = Parallel(n_jobs=4, prefer="processes", verbose=10)(
+    if n_jobs > 1:
+        results = Parallel(n_jobs=n_jobs, prefer="processes", verbose=10)(
             delayed(solve_one)(n_lv) for n_lv in range(1, max_lv + 1)
         )
     else:
