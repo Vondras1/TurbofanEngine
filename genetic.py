@@ -5,23 +5,118 @@ import time
 import copy
 import numpy as np
 
-#PARAMETERS
+from sklearn.model_selection import GroupKFold
+from sklearn.metrics.pairwise import rbf_kernel
+from sklearn.preprocessing import KernelCenterer
+from sklearn.cross_decomposition import PLSRegression
+from sklearn.metrics import pairwise_distances
+from joblib import Parallel, delayed
 
-def run_genetic(population_size, generations, gamma_low, gamma_high, X, y, fitness, seed=42):
-    elite_cnt = 1
+
+def center_train_test(K_tr, K_val):
+    mu_rows_tr = K_tr.mean(axis=1, keepdims=True)   # (n,1)
+    mu_cols_tr = K_tr.mean(axis=0, keepdims=True)   # (1,n)
+    mu_total   = K_tr.mean()
+    K_tr_c  = K_tr  - mu_rows_tr - mu_cols_tr + mu_total
+
+    mu_rows_val = K_val.mean(axis=1, keepdims=True) # (m,1)
+    K_val_c = K_val - mu_rows_val - mu_cols_tr + mu_total
+    return K_tr_c, K_val_c
+
+def precompute_cv_blocks(X, y, groups, n_splits=5):
+    gkf = GroupKFold(n_splits=n_splits)
+    blocks = []
+    for tr_idx, val_idx in gkf.split(X, y, groups):
+        X_tr = X.iloc[tr_idx].to_numpy()
+        X_val = X.iloc[val_idx].to_numpy()
+        y_tr = y.iloc[tr_idx].to_numpy()
+        y_val = y.iloc[val_idx].to_numpy()
+
+        # squared euclidean distance matrices
+        D_tr  = pairwise_distances(X_tr,  X_tr,  metric="sqeuclidean")
+        D_val = pairwise_distances(X_val, X_tr, metric="sqeuclidean")
+
+        blocks.append({
+            "D_tr": D_tr,
+            "D_val": D_val,
+            "y_tr": y_tr,
+            "y_val": y_val
+        })
+    return blocks
+
+def gamma_bounds_from_blocks(blocks):
+    # collect medians of nonzero distances per fold
+    meds = []
+    for b in blocks:
+        d = b["D_tr"]
+        nz = d[d > 0]
+        if nz.size:
+            meds.append(np.median(nz))
+    if not meds:
+        return 1e-6, 1.0  # fallback
+    m = np.median(meds)
+    # gamma ≈ 1 / (2*m); give a decade or two around it
+    g0 = 1.0 / (2.0 * m + 1e-12)
+    g_low  = g0 * 1e-3
+    g_high = g0 * 1e+3
+    return g_low, g_high
+
+def run_genetic(population_size, generations, data, n_jobs=-1, log_gamma_round=4, seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    
+    elite_cnt       = 2
     tournament_selection_count = 3
-    crossover_rate = 0.5
-    mutation_rate = 0.8
+    crossover_rate  = 0.9
+    mutation_rate   = 0.3
     max_lv = 20
 
+    groups = data["unit number"].values
+    X = data.iloc[:, 2:-1]
+    y = data.iloc[:, -1]
+    blocks = precompute_cv_blocks(X, y, groups, 4)
+    gamma_low, gamma_high = gamma_bounds_from_blocks(blocks)
+
+    print(f"Gamma bounds = ({gamma_low}; {gamma_high})")
+
+    def fitness(gamma, n_lv):
+        q2_scores = []
+        for b in blocks:
+            # build kernels using only gamma
+            K_tr  = np.exp(-gamma * b["D_tr"])
+            K_val = np.exp(-gamma * b["D_val"])
+
+            # center
+            centerer = KernelCenterer()
+            K_tr_c  = centerer.fit_transform(K_tr)
+            K_val_c = centerer.transform(K_val)
+            
+            pls = PLSRegression(n_components=n_lv, scale=False)
+            pls.fit(K_tr_c, b["y_tr"])
+            y_pred = pls.predict(K_val_c).ravel()
+
+            ss_res = np.sum((b["y_val"] - y_pred)**2)
+            ss_tot = np.sum((b["y_val"] - np.mean(b["y_tr"]))**2)
+            q2_fold = 1 - ss_res/ss_tot
+            q2_scores.append(q2_fold)
+
+        # negative because GA minimizes
+        return -np.mean(q2_scores)
+
     class Chromozome():
+        fitness_cache = {}
+
         def __init__(self, genes):
             self._genes = genes
             self._fitness = None
+        
+        @classmethod
+        def sample_log_uniform(cls, low, high):
+            return np.exp(np.random.uniform(np.log(low), np.log(high)))
 
         @classmethod 
         def random_gamma(cls):
-            return ((gamma_high - gamma_low) * random.random()) + gamma_low
+            return cls.sample_log_uniform(gamma_low, gamma_high)
         
         @classmethod 
         def random_lv(cls):
@@ -35,14 +130,19 @@ def run_genetic(population_size, generations, gamma_low, gamma_high, X, y, fitne
         
         @property
         def fitness(self)-> float:
-            if self._fitness == None:
-                self._fitness = self.compute_fitness()
+            gamma, n_lv = self.genes[0], self.genes[1]
 
-            return self._fitness
+            def key_from_genes(gamma, lv, log_round=3):
+                k = (float(np.round(np.log(gamma), log_round)), int(lv))
+                return k
 
-        def compute_fitness(self) -> float:
-            return fitness(self.genes[0], self.genes[1], X, y)
-            
+            key = key_from_genes(gamma, n_lv)
+            if key in self.fitness_cache:
+                return self.fitness_cache[key]
+            f = fitness(gamma, n_lv)  # your current routine
+            self.fitness_cache[key] = f
+            return f
+
         @property
         def genes(self):
             return self._genes
@@ -52,13 +152,37 @@ def run_genetic(population_size, generations, gamma_low, gamma_high, X, y, fitne
             self._genes = value
             self._fitness = None
 
-        def mutate(self):
+        def mutate(self, sigma_log=0.10, p_reset=0.05, big_step_prob=0.25):
+            """
+            sigma_log: std dev of log-gamma noise as a fraction of the log-range
+            p_reset:  small chance to re-sample gamma anywhere in range
+            big_step_prob: chance to take a larger ±k step for n_lv
+            """
             gamma, lv = self.genes
-            if random.random() < 0.5:
-                gamma += np.random.normal(0, 0.1 * (gamma_high - gamma_low))
-                gamma = min(max(gamma, gamma_low), gamma_high)
+
+            # --- mutate gamma in log-space ---
+            log_low, log_high = np.log(gamma_low), np.log(gamma_high)
+            span = log_high - log_low
+
+            # Gaussian drift in log-space
+            logg = np.log(gamma) + np.random.normal(0.0, sigma_log * span)
+
+            # Occasional random reset to diversify
+            if np.random.rand() < p_reset:
+                logg = np.random.uniform(log_low, log_high)
+
+            gamma = float(np.clip(np.exp(logg), gamma_low, gamma_high))
+
+            # --- mutate n_lv (discrete) ---
+            if np.random.rand() < big_step_prob:
+                # take a slightly bigger jump, but still local
+                step = np.random.randint(-3, 4)  # [-3, +3]
+                if step == 0:
+                    step = np.random.choice([-1, 1])
             else:
-                lv = max(1, min(max_lv, lv + random.choice([-1, 1])))
+                step = np.random.choice([-1, 1])  # small local move
+
+            lv = int(np.clip(lv + step, 1, max_lv))
 
             self.genes = [gamma, lv]
 
@@ -86,15 +210,18 @@ def run_genetic(population_size, generations, gamma_low, gamma_high, X, y, fitne
         
         return mating_pool
 
-
-    def breed(a:Chromozome, b:Chromozome):
-        genes1 = a.genes
-        genes2 = b.genes
-
-        child1 = Chromozome([genes1[0], genes2[1]])
-        child2 = Chromozome([genes2[0], genes1[1]])
-
-        return child1, child2
+    def breed(a, b):
+        g1, lv1 = a.genes
+        g2, lv2 = b.genes
+        # arithmetic/blend crossover for gamma
+        alpha = 0.5 + 0.2*np.random.randn()  # around 0.5
+        alpha = np.clip(alpha, 0.0, 1.0)
+        g_child1 = alpha*g1 + (1-alpha)*g2
+        g_child2 = alpha*g2 + (1-alpha)*g1
+        # discrete for lv
+        lv_child1 = lv1 if np.random.rand()<0.5 else lv2
+        lv_child2 = lv2 if np.random.rand()<0.5 else lv1
+        return Chromozome([g_child1, lv_child1]), Chromozome([g_child2, lv_child2])
 
     def get_best(population:List[Chromozome]):
         return min(population, key=lambda chromozome: chromozome.fitness)
@@ -109,7 +236,7 @@ def run_genetic(population_size, generations, gamma_low, gamma_high, X, y, fitne
     mating_count = population_size//2
     best_fitness = np.inf
 
-    fitness_log = np.array([])
+    fitness_history = []
     for iter in range(generations):
         new_population = []
         mating_pool = selection(population)
@@ -150,10 +277,11 @@ def run_genetic(population_size, generations, gamma_low, gamma_high, X, y, fitne
         best_fitness = best.fitness
 
         if iter % 3 == 0:
-            np.append(fitness_log, [iter, -best.fitness])
+            fitness_history.append((iter, -best.fitness))
             print(f"Iteration {iter}, Q2 = {-best_fitness}, gamma = {best.genes[0]}, n_lv = {best.genes[1]}")
     
     genes = best.genes
-    return genes[0], genes[1], best.fitness, fitness_log
+    q2_log = np.array(fitness_history)
+    return genes[0], genes[1], best.fitness, q2_log
     
 
