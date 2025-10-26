@@ -30,7 +30,7 @@ def gamma_bounds_from_data(X, kernel_f=rbf_kernel, spread=3, tiny=1e-300):
     elif kernel_f == cauchy_kernel:
         return cauchy_gamma_bounds(X, spread)
     elif kernel_f == polynomial_kernel:
-        return 1e-3, 10e2
+        return 1e-3, 10
     else:
         raise ValueError("Unsupported kernel")
 
@@ -38,22 +38,6 @@ def gamma_bounds_from_data(X, kernel_f=rbf_kernel, spread=3, tiny=1e-300):
     g_high = gamma0 * (10 **  spread)
     return g_low, g_high
 
-def gamma_bounds_from_blocks(blocks):
-    # collect medians of nonzero distances per fold
-    meds = []
-    for b in blocks:
-        d = b["D_tr"]
-        nz = d[d > 0]
-        if nz.size:
-            meds.append(np.median(nz))
-    if not meds:
-        return 1e-6, 1.0  # fallback
-    m = np.median(meds)
-    # gamma ≈ 1 / (2*m); give a decade or two around it
-    g0 = 1.0 / (2.0 * m + 1e-12)
-    g_low  = g0 * 1e-3
-    g_high = g0 * 1e+3
-    return g_low, g_high
 
 def optimize(data, max_lv=20, folds=3, show_plot=True, n_jobs=5, kernel_f=rbf_kernel, method_name = "RBF_kernel"):
     groups = data["unit number"].values
